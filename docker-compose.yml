@@ -1,0 +1,29 @@
+services:
+  napkinring:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: napkinring
+    restart: unless-stopped
+    network_mode: service:ts-napkinring
+
+  ts-napkinring:
+    image: tailscale/tailscale:latest
+    hostname: napkinring
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_EXTRA_ARGS=--advertise-tags=tag:container
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_SERVE_CONFIG=/config/serve.json
+    volumes:
+      - tailscale-data-napkinring:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+      - /home/diegoaguilera/Projects/napkinRing/tailscale:/config
+    cap_add:
+      - net_admin
+      - sys_module
+    restart: unless-stopped
+
+volumes:
+  tailscale-data-napkinring:
+    driver: local

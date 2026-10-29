@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Guest book</title>
+  <meta name="description" content="Sign the guest book and read who else has visited.">
+  <link rel="preconnect" href="https://api.fontshare.com">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400&display=swap">
+  <link rel="stylesheet" href="css/app.css">
+  <script src="js/config.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <!-- Uneven ink for the pressed "Signed" mark. -->
+  <svg class="visually-hidden" aria-hidden="true" focusable="false">
+    <filter id="press" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="3" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -1.6 1.45" result="mask"/>
+      <feComposite in="SourceGraphic" in2="mask" operator="in"/>
+    </filter>
+  </svg>
+
+  <main class="desk">
+    <article class="card stock">
+
+      <!-- Shown without a valid ring and key, and when scripting is off. -->
+      <section class="state" id="state-tap">
+        <h1>Tap your napkin ring to sign the guest book</h1>
+        <p class="lead">Hold the top of your phone against the ring on your napkin and this page opens ready to sign.</p>
+      </section>
+
+      <section class="state" id="state-form" hidden>
+        <!-- Placeholder copy: edit the heading and subtitle. -->
+        <h1>Sign the guest book</h1>
+        <p class="lead">Leave your name and a note for the hosts.</p>
+
+        <form class="form" id="sign-form" novalidate>
+          <div class="field">
+            <label for="guest-name">Name</label>
+            <div class="combo">
+              <input class="input" id="guest-name" name="guest_name" type="text" required maxlength="80"
+                     autocomplete="off" autocapitalize="words" spellcheck="false"
+                     role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="name-list">
+              <ul class="suggest" id="name-list" role="listbox" aria-label="Names already in the guest book" hidden></ul>
+            </div>
+            <p class="field__error" id="guest-name-error" hidden></p>
+          </div>
+
+          <div class="field">
+            <label for="entry-date">Date</label>
+            <input class="input" id="entry-date" name="date" type="date" required>
+            <p class="field__error" id="entry-date-error" hidden></p>
+          </div>
+
+          <div class="field">
+            <label for="entry-comment">Comment <span class="optional">optional</span></label>
+            <textarea class="input input--area" id="entry-comment" name="comment" maxlength="1000" rows="4"></textarea>
+          </div>
+
+          <fieldset class="field rating" id="rating">
+            <legend>Dinner rating <span class="optional">optional</span></legend>
+            <div class="rating__row">
+              <input type="radio" name="dinner_rating" id="rate-1" value="1"><label for="rate-1"><span class="visually-hidden">1 out of 5</span></label>
+              <input type="radio" name="dinner_rating" id="rate-2" value="2"><label for="rate-2"><span class="visually-hidden">2 out of 5</span></label>
+              <input type="radio" name="dinner_rating" id="rate-3" value="3"><label for="rate-3"><span class="visually-hidden">3 out of 5</span></label>
+              <input type="radio" name="dinner_rating" id="rate-4" value="4"><label for="rate-4"><span class="visually-hidden">4 out of 5</span></label>
+              <input type="radio" name="dinner_rating" id="rate-5" value="5"><label for="rate-5"><span class="visually-hidden">5 out of 5</span></label>
+              <button class="text-btn" type="button" id="rating-clear" hidden>Clear</button>
+            </div>
+          </fieldset>
+
+          <div class="form__foot">
+            <p class="alert" id="form-error" role="alert" hidden></p>
+            <button class="btn btn--ink" type="submit" id="submit-btn">Sign the book</button>
+            <p class="note" id="ring-note"></p>
+          </div>
+        </form>
+      </section>
+
+      <section class="state" id="state-thanks" hidden>
+        <!-- Placeholder copy: edit the thank-you heading and message. -->
+        <h1 id="thanks-title" tabindex="-1">Thank you for signing</h1>
+        <p class="lead">Your entry is in the guest book.</p>
+        <div class="thanks__foot">
+          <button class="btn btn--ink" type="button" id="sign-again">Sign again</button>
+          <p class="stamp" role="status"><span>Signed</span><time id="stamp-date"></time></p>
+        </div>
+      </section>
+    </article>
+
+    <nav class="books" id="books" aria-label="Read the guest book" hidden>
+      <button class="btn btn--card" type="button" id="open-ring" aria-haspopup="dialog">This ring</button>
+      <button class="btn btn--card" type="button" id="open-all" aria-haspopup="dialog">Everyone</button>
+    </nav>
+  </main>
+
+  <dialog class="sheet" id="ring-dialog" aria-labelledby="ring-dialog-title">
+    <header class="sheet__head">
+      <div class="sheet__bar">
+        <h2 id="ring-dialog-title">Guest</h2>
+        <button class="icon-btn" type="button" data-close>
+          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span class="visually-hidden">Close</span>
+        </button>
+      </div>
+    </header>
+    <div class="sheet__body" tabindex="0" role="region" aria-label="Entries on this ring">
+      <div class="list-state" data-state aria-live="polite"></div>
+      <ol class="entries" data-entries></ol>
+    </div>
+  </dialog>
+
+  <dialog class="sheet" id="all-dialog" aria-labelledby="all-dialog-title">
+    <header class="sheet__head">
+      <div class="sheet__bar">
+        <h2 id="all-dialog-title">Everyone</h2>
+        <button class="icon-btn" type="button" data-close>
+          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <span class="visually-hidden">Close</span>
+        </button>
+      </div>
+      <fieldset class="filter">
+        <legend class="visually-hidden">Show entries from</legend>
+        <div class="groove">
+          <input type="radio" name="ring-filter" id="filter-all" value="" checked><label for="filter-all">All</label>
+          <input type="radio" name="ring-filter" id="filter-1" value="1"><label for="filter-1">Guest 1</label>
+          <input type="radio" name="ring-filter" id="filter-2" value="2"><label for="filter-2">Guest 2</label>
+          <input type="radio" name="ring-filter" id="filter-3" value="3"><label for="filter-3">Guest 3</label>
+          <input type="radio" name="ring-filter" id="filter-4" value="4"><label for="filter-4">Guest 4</label>
+        </div>
+      </fieldset>
+    </header>
+    <div class="sheet__body" tabindex="0" role="region" aria-label="Entries from everyone">
+      <div class="list-state" data-state aria-live="polite"></div>
+      <ol class="entries" data-entries></ol>
+    </div>
+  </dialog>
+</body>
+</html>
