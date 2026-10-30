@@ -24,6 +24,8 @@ The key is a gate that keeps people who have never held a ring from reading or w
 
 **The website never validates the key.** The page is only a messenger. If the JS tried to check the key itself, the real key would have to sit in the code where anyone could read it. PocketBase is the only place that compares it.
 
+An NFC chip can only store a URL, and a browser cannot add a header from a link. That is why the chip carries the key in the fragment and the page's JavaScript adds the header.
+
 ### Tradeoffs
 - Anyone who reads a chip (or opens dev tools on a guest's phone) can see the key. It is a gate, not strong security.
 - The key is never rotated. A lost ring cannot be revoked without changing the key and rewriting all four chips.
@@ -31,25 +33,64 @@ The key is a gate that keeps people who have never held a ring from reading or w
 
 ---
 
-## PocketBase setup (all done in the admin UI)
+## Deployment
 
-### 1. Create the collection
+| File | Purpose |
+|---|---|
+| `Dockerfile` | `nginx:alpine`, copies `index.html`, `css/` and `js/` only |
+| `docker-compose.yml` | Site container + Tailscale sidecar (hostname `napkinring`) |
+| `tailscale/serve.json` | Serve config: HTTPS on 443, proxy `/` to the site, Funnel enabled |
 
-New collection, type **Base**, named `guestbook`:
+- PocketBase is already running and publicly reachable; it is **not** part of this stack. Its URL goes in `js/config.js` as the only configuration value (not a secret).
+- Create a Portainer stack from this repo and enter `TS_AUTHKEY` in the stack's environment variables. It is the only secret, and it never goes in the repo.
+- The sidecar mounts the `tailscale/` folder at `/config`. Portainer git stacks need the **relative path volumes** option enabled for a relative mount (`./tailscale:/config`). Otherwise use an absolute host path where the repo is checked out.
+- Your tailnet policy must grant the `funnel` node attribute to `tag:container`, or Funnel is ignored.
+- The site files are baked into the image, so any change to the repo only shows up after Portainer pulls and **rebuilds**. Use "Pull and redeploy" with the re-build option. Optionally enable the redeploy webhook or polling so a `git push` updates the site.
 
-| Field | Type | Settings |
-|---|---|---|
-| guest_name | Text | Required, max length 80 |
-| date | Date | Required |
-| comment | Text | Optional, max length 1000 |
-| dinner_rating | Number | Optional, min 1, max 5, integers only |
-| ring | Text | Required |
+---
 
-PocketBase's built-in `created` field is kept for auditing. `date` is the user-facing, editable date.
+## Configuration after install
 
-### 2. Set the API rules
+Do these in order once the stack is running.
 
-Open the collection's **API Rules** tab. Replace `YOUR_KEY` with the real key.
+### 1. Point the site at PocketBase
+
+Edit `js/config.js` and replace the placeholder with your PocketBase address (not a secret):
+
+```js
+window.NAPKIN_CONFIG = {
+  pocketbaseUrl: 'https://pocketbase.tail32217.ts.net',
+};
+```
+
+Commit, push, and redeploy the stack. If the page shows **"Could not reach the guest book"**, this value is usually the cause (still the placeholder, or a wrong address).
+
+### 2. Generate the key
+
+Run one of these and save the result in a password manager. It goes into the PocketBase rules and the chip URLs only, never into this repo.
+
+```bash
+# Hex, 32 characters (recommended)
+openssl rand -hex 16
+```
+
+```bash
+# Alphanumeric only, 32 characters, no extra tools
+LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 32; echo
+```
+
+```bash
+# Python
+python3 -c "import secrets; print(secrets.token_hex(16))"
+```
+
+Tips:
+- 24 to 32 characters is plenty. Small chips (like NTAG213, about 144 bytes) have limited space, so check that your URL plus key fits.
+- Do not use `openssl rand -base64`. Its output can contain `+`, `/` and `=`, which cause trouble in URLs and rule strings.
+
+### 3. Put the key in PocketBase (collection API rules)
+
+The key is stored in exactly one place on the server: the API rules of the `guestbook` collection. In the PocketBase admin UI, open **Collections, guestbook, API Rules**. Replace `YOUR_KEY` with the key from step 2.
 
 **List/Search rule and View rule:**
 ```
@@ -70,15 +111,112 @@ Notes:
 - An **empty** rule field means open to everyone. A **locked** rule shows a padlock. Make sure List and View are not left empty by accident.
 - The ring field must be named exactly `ring` for the create rule to work.
 
-### 3. Rate limiting
+### 4. Rate limiting, real client IPs and CORS
+
+See "PocketBase setup" below. Do these before testing the rate limit.
+
+### 5. Program the chips
+
+Write four NFC URLs, one per ring, as a URL/URI record in an NFC writer app. Use the real hostname and key (kept outside this repo):
+
+```
+https://<napkinring-host>/#ring=1&key=YOUR_KEY
+https://<napkinring-host>/#ring=2&key=YOUR_KEY
+https://<napkinring-host>/#ring=3&key=YOUR_KEY
+https://<napkinring-host>/#ring=4&key=YOUR_KEY
+```
+
+### 6. Test from the command line
+
+Replace `YOUR_KEY` in each command with the real key. Avoid leaving the real key in shared shell history. Starting a command with a space hides it from history in many shells.
+
+**List without the key.** Expect a rejection or an empty `"items":[]`. Check the body, not only the status.
+```bash
+curl -s -w "\nHTTP %{http_code}\n" "https://pocketbase.tail32217.ts.net/api/collections/guestbook/records"
+```
+
+**List with the key.** Expect HTTP 200 and your records.
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -H "X-Napkin-Key: YOUR_KEY" "https://pocketbase.tail32217.ts.net/api/collections/guestbook/records"
+```
+
+**Create with the key and a valid ring.** Expect HTTP 200 and the new record as JSON.
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST "https://pocketbase.tail32217.ts.net/api/collections/guestbook/records" \
+  -H "X-Napkin-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"guest_name":"Test Guest","date":"2026-10-30 12:00:00.000Z","comment":"curl test","dinner_rating":5,"ring":"1"}'
+```
+
+**Create without the key.** Expect a rejection (a 400-series status).
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST "https://pocketbase.tail32217.ts.net/api/collections/guestbook/records" \
+  -H "Content-Type: application/json" \
+  -d '{"guest_name":"No Key","date":"2026-10-30 12:00:00.000Z","ring":"1"}'
+```
+
+**Create with an invalid ring.** Expect a rejection.
+```bash
+curl -s -w "\nHTTP %{http_code}\n" -X POST "https://pocketbase.tail32217.ts.net/api/collections/guestbook/records" \
+  -H "X-Napkin-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"guest_name":"Bad Ring","date":"2026-10-30 12:00:00.000Z","ring":"5"}'
+```
+
+**CORS preflight from the site.** Look for `Access-Control-Allow-Origin` and `x-napkin-key` in the allowed headers.
+```bash
+curl -s -i -X OPTIONS "https://pocketbase.tail32217.ts.net/api/collections/guestbook/records" \
+  -H "Origin: https://napkinring.tail32217.ts.net" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: x-napkin-key,content-type"
+```
+
+**Rate limit.** Sends 10 rapid posts and prints one status per request. Expect 200s, then 429s once the limit is passed.
+```bash
+for i in $(seq 1 10); do
+  curl -s -o /dev/null -w "%{http_code} " -X POST "https://pocketbase.tail32217.ts.net/api/collections/guestbook/records" \
+    -H "X-Napkin-Key: YOUR_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"guest_name":"Rate Test","date":"2026-10-30 12:00:00.000Z","ring":"1"}'
+done; echo
+```
+
+**Site reachable.** Also open the chip URL on a phone that is not on your tailnet.
+```bash
+curl -sI "https://napkinring.tail32217.ts.net" | head -n 1
+```
+
+Cleanup: the create and rate-limit tests make real records. Update and delete are locked, so remove them in the PocketBase admin UI.
+
+Your own tests all come from one IP. To confirm limits are per guest through Funnel, also compare behavior from a phone on cellular.
+
+---
+
+## PocketBase setup (reference)
+
+### Create the collection
+
+New collection, type **Base**, named `guestbook`:
+
+| Field | Type | Settings |
+|---|---|---|
+| guest_name | Text | Required, max length 80 |
+| date | Date | Required |
+| comment | Text | Optional, max length 1000 |
+| dinner_rating | Number | Optional, min 1, max 5, integers only |
+| ring | Text | Required |
+
+PocketBase's built-in `created` field is kept for auditing. `date` is the user-facing, editable date. The API rules are in "Configuration after install", step 3.
+
+### Rate limiting
 
 Settings, then the rate limit section: enable it and set conservative limits. Suggested starting point is about 5 create requests per minute per IP, with looser limits on reads.
 
-### 4. Real client IPs behind Funnel
+### Real client IPs behind Funnel
 
-Behind Tailscale Funnel and the sidecar, PocketBase may see the proxy's address instead of each guest's. If so, every guest shares one rate-limit bucket. In Settings, configure the **trusted proxy headers** so PocketBase reads the real client IP. Test this after deploying (see below).
+Behind Tailscale Funnel and the sidecar, PocketBase may see the proxy's address instead of each guest's. If so, every guest shares one rate-limit bucket. In Settings, configure the **trusted proxy headers** so PocketBase reads the real client IP. Test this after deploying.
 
-### 5. CORS
+### CORS
 
 PocketBase's allowed origins are set at startup with the `--origins` flag, not in the admin UI. The default allows all origins. Restricting it to the site's hostname is optional hardening. Because the browser sends a custom header (`X-Napkin-Key`), the preflight request must be allowed to carry it.
 
@@ -90,38 +228,9 @@ When a rule fails, PocketBase's response depends on the action. A failed create 
 
 - treats any non-success response on a post as a failure and **never shows "thanks" unless the server confirmed the save**;
 - distinguishes a rate-limit response (429) from other failures;
-- treats an empty list with suspicion rather than assuming there are no guests.
+- shows "Could not reach the guest book" when the request never gets a response (wrong PocketBase address, or a CORS block).
 
-Confirm the real behavior during the tests below and adjust the messages if needed.
-
----
-
-## Deployment
-
-| File | Purpose |
-|---|---|
-| `Dockerfile` | `nginx:alpine`, copies `index.html`, `css/` and `js/` only |
-| `docker-compose.yml` | Site container + Tailscale sidecar (hostname `napkinring`) |
-| `tailscale/serve.json` | Serve config: HTTPS on 443, proxy `/` to the site, Funnel enabled |
-
-- PocketBase is already running and publicly reachable; it is **not** part of this stack. Its URL goes in `js/config.js` as the only configuration value (not a secret).
-- Create a Portainer stack from this repo and enter `TS_AUTHKEY` in the stack's environment variables. It is the only secret, and it never goes in the repo.
-- The sidecar mounts the `tailscale/` folder at `/config`. Portainer git stacks need the **relative path volumes** option enabled for a relative mount. Otherwise use an absolute host path where the repo is checked out.
-- Your tailnet policy must grant the `funnel` node attribute to `tag:container`, or Funnel is ignored.
-- Optionally enable Portainer's redeploy webhook or polling so a `git push` updates the site.
-
----
-
-## Programming the chips
-
-Write four NFC URLs, one per ring, using the real hostname and key (kept outside this repo):
-
-```
-https://<napkinring-host>/#ring=1&key=YOUR_KEY
-https://<napkinring-host>/#ring=2&key=YOUR_KEY
-https://<napkinring-host>/#ring=3&key=YOUR_KEY
-https://<napkinring-host>/#ring=4&key=YOUR_KEY
-```
+A wrong key on a list request may show an empty list instead of an error. Confirm the real behavior with the tests above.
 
 ---
 
@@ -140,4 +249,4 @@ https://<napkinring-host>/#ring=4&key=YOUR_KEY
 
 ## More detail
 
-See `BUILD_SPEC.md` for the full front-end and design specification.
+See `BuildSpec.md` for the full front-end and design specification.
